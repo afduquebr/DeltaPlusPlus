@@ -13,8 +13,9 @@ Delta++/
 ├── figs/                        # Output plots
 ├── exec/
 │   └── train.sh                 # Job submission script
-├── particlenet_pair.py          # Data pipeline + model definition + training loop
-├── inference.py                 # Evaluation, plots, and metrics
+├── src/ 
+    ├── particlenet_pair.py          # Data pipeline + model definition + training loop
+    └── inference.py                 # Evaluation, plots, and metrics
 └── requirements.txt             # Packages and versions used
 
 ---
