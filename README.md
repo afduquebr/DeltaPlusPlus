@@ -14,22 +14,23 @@ Delta++/
 ├── exec/
 │   └── train.sh                 # Job submission script
 ├── src/ 
-    ├── particlenet_pair.py          # Data pipeline + model definition + training loop
-    └── inference.py                 # Evaluation, plots, and metrics
+│   ├── particlenet_pair.py          # Data pipeline + model definition + training loop
+│   └── inference.py                 # Evaluation, plots, and metrics
 └── requirements.txt             # Packages and versions used
+```
 
 ---
 
 ## Usage
 
-**Train (5 independent runs on a V100 GPU):**
+**Train (Adapted to SLURM):**
 ```bash
 ./exec/train.sh
 ```
 
 **Evaluate:**
 ```bash
-python inference.py
+python src/inference.py
 ```
 
 ---
