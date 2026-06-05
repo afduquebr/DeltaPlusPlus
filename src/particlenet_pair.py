@@ -340,16 +340,16 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", nargs="?",
+    parser.add_argument("--data_dir", type=str, default="/data/AuAu_1230MeV_1000evts_1.json.gz",
                         default="data/AuAu_1230MeV_1000evts_1.json.gz",
                         help="Path to input .json.gz file")
     parser.add_argument("--run", type=int, default=1,
                         help="Run index (1-5); sets random seed and output filename")
-    parser.add_argument("--models_dir", default="models", 
-                        help="Directory to save trained models and normalisers"),
+    parser.add_argument("--models_dir", type=str, default="models",
+                        help="Directory to save trained models and normalisers")
     args = parser.parse_args()
 
-    data_path = Path(args.data)
+    data_path = Path(args.data_dir)
     run_id    = args.run
 
     torch.manual_seed(run_id)
