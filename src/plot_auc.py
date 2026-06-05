@@ -12,8 +12,9 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-LOGS_DIR = Path(__file__).parent.parent / "logs"
-FIGS_DIR = Path(__file__).parent.parent / "figs"
+PATH = "/pbs/home/a/aduque/private/Delta++"
+LOGS_DIR = f"{PATH}/logs"
+FIGS_DIR = f"{PATH}/figs"
 FIGS_DIR.mkdir(exist_ok=True)
 
 EPOCH_RE = re.compile(
@@ -127,7 +128,7 @@ ax.text(0.02, 0.08, r"$E_\mathrm{kin}/A = 1.23$ GeV, ParticleNet",
 ax.legend(fontsize=10)
 fig.tight_layout()
 
-out = FIGS_DIR / "auc_curves.png"
+out = f"{FIGS_DIR}/auc_curves.png"
 fig.savefig(out, dpi=150, bbox_inches="tight")
 print(f"\nSaved → {out}")
 plt.close(fig)

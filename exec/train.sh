@@ -21,10 +21,13 @@ fi
 
 cd /pbs/home/a/aduque/private/Delta++ || exit
 
-DATA="data/AuAu_1230MeV_1000evts_1.json.gz"
+DATA="/pbs/home/a/aduque/private/Delta++/data/AuAu_1230MeV_1000evts_1.json.gz"
+MODELS_DIR="/pbs/home/a/aduque/private/Delta++/models"
 
 echo "Starting run ${SLURM_ARRAY_TASK_ID} ..."
-if ! python -u particlenet_pair.py "$DATA" --run "${SLURM_ARRAY_TASK_ID}"; then
+if ! python -u src/particlenet_pair.py "$DATA" \
+        --run "${SLURM_ARRAY_TASK_ID}" \
+        --models_dir "$MODELS_DIR"; then
     echo "Error: Training failed for run ${SLURM_ARRAY_TASK_ID}."
     exit 1
 fi

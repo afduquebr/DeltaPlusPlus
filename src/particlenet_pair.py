@@ -341,10 +341,12 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data", nargs="?",
-                        default=str(Path(__file__).parent / "AuAu_1230MeV_1000evts_1.json.gz"),
+                        default="data/AuAu_1230MeV_1000evts_1.json.gz",
                         help="Path to input .json.gz file")
     parser.add_argument("--run", type=int, default=1,
                         help="Run index (1-5); sets random seed and output filename")
+    parser.add_argument("--models_dir", default="models", 
+                        help="Directory to save trained models and normalisers"),
     args = parser.parse_args()
 
     data_path = Path(args.data)
@@ -367,7 +369,7 @@ if __name__ == "__main__":
     print(f"  Pairs : {len(labels):,}  |  signal {n_sig:,}  |  background {n_bg:,}")
     print(f"  Imbalance ratio : {n_bg / n_sig:.1f}× more background than signal")
 
-    models_dir = Path(__file__).parent / "models"
+    models_dir = args.models_dir
     models_dir.mkdir(exist_ok=True)
 
     train_loader, val_loader, test_loader, norm = make_loaders(
