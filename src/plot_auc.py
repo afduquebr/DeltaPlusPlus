@@ -7,6 +7,7 @@ Saves figs/auc_curves.png
 import re
 import sys
 from pathlib import Path
+import os
 from collections import defaultdict
 
 import numpy as np
@@ -15,7 +16,7 @@ import matplotlib.pyplot as plt
 PATH = "/pbs/home/a/aduque/private/Delta++"
 LOGS_DIR = f"{PATH}/logs"
 FIGS_DIR = f"{PATH}/figs"
-FIGS_DIR.mkdir(exist_ok=True)
+os.makedirs(FIGS_DIR, exist_ok=True)
 
 EPOCH_RE = re.compile(
     r"^\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+lr=([\de.+\-]+)"
@@ -43,7 +44,7 @@ def parse_log(path: Path) -> dict | None:
 
 def latest_job_logs(logs_dir: Path) -> list[tuple[int, Path]]:
     groups = defaultdict(list)
-    for p in sorted(logs_dir.glob("train_*_*.log")):
+    for p in sorted(Path(logs_dir).glob("train_*_*.log")):
         parts = p.stem.split("_")
         if len(parts) == 3:
             groups[parts[1]].append((int(parts[2]), p))
@@ -122,7 +123,8 @@ if lr_changes:
 
 ax.set_xlabel("Epoch", fontsize=13)
 ax.set_ylabel("AUC-ROC", fontsize=13)
-ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
+ax.text(0.02, 0.12, r"$\bf{SOS}$ Simulation Internal",
+        transform=ax.transAxes, fontsize=13)
 ax.text(0.02, 0.08, r"$E_\mathrm{kin}/A = 1.23$ GeV, ParticleNet",
         transform=ax.transAxes, fontsize=11)
 ax.legend(fontsize=10)

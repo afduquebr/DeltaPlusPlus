@@ -14,7 +14,9 @@ Loads best_model_run{1..5}.pt, evaluates each on its own held-out test split
 import gzip
 import json
 import sys
+import os
 from pathlib import Path
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -48,7 +50,7 @@ SCORE_CUT  = 0.5
 
 # ─── Load data ────────────────────────────────────────────────────────────────
 
-print(f"Loading {DATA_PATH.name} ...")
+print(f"Loading {DATA_PATH} ...")
 with gzip.open(DATA_PATH, "rt") as f:
     data = json.load(f)
 
@@ -67,11 +69,6 @@ for run_id in range(1, N_RUNS + 1):
     model_path = f"{MODELS_DIR}/best_model_run{run_id}.pt"
     idx_path   = f"{MODELS_DIR}/test_idx_run{run_id}.npy"
     norm_path  = f"{MODELS_DIR}/normalizer_run{run_id}.npz"
-
-    missing = [p for p in (model_path, idx_path, norm_path) if not p.exists()]
-    if missing:
-        print(f"  [run {run_id}] missing artifacts: {[p.name for p in missing]}, skipping.")
-        continue
 
     # Load persisted split — no re-splitting, guaranteed no leakage
     idx_te      = np.load(idx_path)
@@ -175,13 +172,13 @@ cm_mean = cms.mean(0)
 cm_std  = cms.std(0)
 
 figs_dir = f"{PATH}/figs"
-figs_dir.mkdir(exist_ok=True)
+os.makedirs(os.path.dirname(figs_dir), exist_ok=True)
 
 mean_auc = np.mean(auc_vals)
 std_auc  = np.std(auc_vals)
 
 def save(fig, name):
-    p = figs_dir / name
+    p = f"{figs_dir}/{name}"
     fig.savefig(p, dpi=150, bbox_inches="tight")
     print(f"Saved → {p}")
     plt.close(fig)
@@ -377,8 +374,10 @@ ax.axvline(DELTA_MASS, color="k", ls="--", lw=1, label=f"M(Δ⁺⁺) = {DELTA_MA
 ax.axvspan(MASS_WIN_LO, MASS_WIN_HI, alpha=0.06, color="gold", label="Signal window")
 ax.set_xlabel(r"$M(p\pi^+)$ [GeV/c²]", fontsize=13)
 ax.set_ylabel("Pairs / bin", fontsize=13)
-ax.set_ylim(-50, 2000)
-ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
+ax.set_title("Invariant mass spectrum", fontsize=13)
+ax.set_yscale("log")
+ax.set_ylim(1, 2000)
+# ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
 ax.legend(fontsize=9)
 sos_sim_label(ax)
 
@@ -393,7 +392,7 @@ ax.axvline(optimal_cut,  color="k",      ls=":",  lw=1.5,
            label=f"Optimal = {optimal_cut:.2f}  (S/√B = {snr_scan_mean.max():.2f})")
 ax.set_xlabel("Score cut", fontsize=13)
 ax.set_ylabel(r"$S/\sqrt{B}$ in signal window", fontsize=13)
-ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
+# ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
 ax.set_ylim(-0.1, 1.6)
 ax.legend(fontsize=9)
 sos_sim_label(ax)

@@ -13,6 +13,7 @@ import argparse
 import gzip
 import json
 import sys
+import os
 from pathlib import Path
 
 import numpy as np
@@ -340,7 +341,7 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/data/AuAu_1230MeV_1000evts_1.json.gz",
+    parser.add_argument("--data_dir", type=str, 
                         default="data/AuAu_1230MeV_1000evts_1.json.gz",
                         help="Path to input .json.gz file")
     parser.add_argument("--run", type=int, default=1,
@@ -349,7 +350,7 @@ if __name__ == "__main__":
                         help="Directory to save trained models and normalisers")
     args = parser.parse_args()
 
-    data_path = Path(args.data_dir)
+    data_path = args.data_dir
     run_id    = args.run
 
     torch.manual_seed(run_id)
@@ -358,7 +359,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Run {run_id}  |  Device : {device}")
 
-    print(f"Loading {data_path.name} ...")
+    print(f"Loading {data_path} ...")
     with gzip.open(data_path, "rt") as f:
         data = json.load(f)
 
@@ -370,7 +371,7 @@ if __name__ == "__main__":
     print(f"  Imbalance ratio : {n_bg / n_sig:.1f}× more background than signal")
 
     models_dir = args.models_dir
-    models_dir.mkdir(exist_ok=True)
+    os.makedirs(os.path.dirname(models_dir), exist_ok=True)
 
     train_loader, val_loader, test_loader, norm = make_loaders(
         node_feats, pair_feats, labels, random_state=run_id

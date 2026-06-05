@@ -46,7 +46,7 @@ def latest_job_logs(logs_dir: Path) -> list[tuple[int, Path]]:
     """Return (run_id, path) pairs from the most recent array job."""
     # group by job array id (filename: train_{array_id}_{run}.log)
     groups = defaultdict(list)
-    for p in sorted(logs_dir.glob("train_*_*.log")):
+    for p in sorted(Path(logs_dir).glob("train_*_*.log")):
         parts = p.stem.split("_")   # ["train", "47158575", "1"]
         if len(parts) == 3:
             groups[parts[1]].append((int(parts[2]), p))
@@ -122,7 +122,9 @@ if lr_changes:
 
 ax.set_xlabel("Epoch", fontsize=13)
 ax.set_ylabel("Loss (BCE)", fontsize=13)
-ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
+# ax.set_title("Loss curves", fontsize=14)
+ax.text(0.02, 0.12, r"$\bf{SOS}$ Simulation Internal",
+        transform=ax.transAxes, fontsize=13)
 ax.text(0.02, 0.08, r"$E_\mathrm{kin}/A = 1.23$ GeV, ParticleNet",
         transform=ax.transAxes, fontsize=11)
 ax.legend(fontsize=10)
