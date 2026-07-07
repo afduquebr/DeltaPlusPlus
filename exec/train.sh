@@ -2,12 +2,12 @@
 #SBATCH --job-name=delta_pnet
 #SBATCH --output=./logs/train_%A_%a.log
 #SBATCH --array=1-5
-#SBATCH --mem=32G
-#SBATCH --time=4:00:00
+#SBATCH --mem=300G
+#SBATCH --time=48:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=5
 #SBATCH --gres=gpu:1
-#SBATCH --partition=gpu_v100
+#SBATCH --partition=gpu_h100
 #SBATCH --account=atlas
 
 module add conda
@@ -21,8 +21,9 @@ fi
 
 cd /pbs/home/a/aduque/private/Delta++ || exit
 
-DATA="/pbs/home/a/aduque/private/Delta++/data/AuAu_1230MeV_1000evts_1.json.gz"
-MODELS_DIR="/pbs/home/a/aduque/private/Delta++/models"
+# DATA="/pbs/home/a/aduque/private/Delta++/data/AuAu_1230MeV_1000evts_1.json.gz"
+DATA="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
+MODELS_DIR="/pbs/home/a/aduque/private/Delta++/models_1M"
 
 echo "Starting run ${SLURM_ARRAY_TASK_ID} ..."
 if ! python -u src/particlenet_pair.py \
