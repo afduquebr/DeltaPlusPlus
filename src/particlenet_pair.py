@@ -11,9 +11,7 @@ Pair-level features (inv_mass, pair_pt, ...) are concatenated at the head.
 
 import argparse
 import gzip
-import json
 import sys
-import os
 from pathlib import Path
 
 import numpy as np
@@ -63,9 +61,63 @@ PDG_PROTON = 2212
 PDG_PION   = 211
 
 
+def _process_event(event: dict, nodes: list, pairs_out: list, labels: list) -> int:
+    """Extract this event's pairs into the flat accumulator lists in-place.
+
+    Returns the number of pairs skipped (index OOB or wrong PDG). Kept
+    separate from build_arrays()/build_arrays_streaming() so both the
+    in-memory and streaming code paths run the exact same extraction logic.
+    """
+    particles = event["particles"]
+    skipped = 0
+
+    for pair in event.get("pairs", []):
+        p_idx  = pair["proton_idx"]
+        pi_idx = pair["pion_idx"]
+        if p_idx >= len(particles) or pi_idx >= len(particles):
+            skipped += 1
+            continue
+
+        proton = particles[p_idx]
+        pion   = particles[pi_idx]
+
+        # Guard: confirm these are the expected particle types
+        if proton.get("pdg") != PDG_PROTON or pion.get("pdg") != PDG_PION:
+            skipped += 1
+            continue
+
+        nodes.append([
+            _particle_row(proton),   # proton — node 0
+            _particle_row(pion),     # pion   — node 1
+        ])
+        pairs_out.append([
+            pair.get("inv_mass_GeV")    or 0.0,
+            pair.get("pair_pt_GeV")     or 0.0,
+            pair.get("pair_rapidity")   or 0.0,
+            pair.get("delta_rapidity")  or 0.0,
+        ])
+        labels.append(pair["is_signal"])
+
+    return skipped
+
+
+def _finalize_arrays(nodes: list, pairs_out: list, labels: list, skipped: int):
+    if skipped:
+        print(f"  [build_arrays] skipped {skipped} pairs (index OOB or wrong PDG)")
+
+    node_feats = np.array(nodes,     dtype=np.float32)  # (N, 2, 10)
+    pair_feats = np.array(pairs_out, dtype=np.float32)  # (N, 4)
+    labels     = np.array(labels,    dtype=np.float32)  # (N,)
+    return node_feats, pair_feats, labels
+
+
 def build_arrays(data: dict):
     """
     Iterate over all events and pairs; return numpy arrays ready for training.
+
+    Requires the whole `data` dict already resident in memory — use
+    build_arrays_streaming() instead for large files that don't fit in RAM
+    as a parsed JSON tree.
 
     Returns
     -------
@@ -77,41 +129,35 @@ def build_arrays(data: dict):
     skipped = 0
 
     for event in data["events"]:
-        particles = event["particles"]
-        for pair in event.get("pairs", []):
-            p_idx  = pair["proton_idx"]
-            pi_idx = pair["pion_idx"]
-            if p_idx >= len(particles) or pi_idx >= len(particles):
-                skipped += 1
-                continue
+        skipped += _process_event(event, nodes, pairs_out, labels)
 
-            proton = particles[p_idx]
-            pion   = particles[pi_idx]
+    return _finalize_arrays(nodes, pairs_out, labels, skipped)
 
-            # Guard: confirm these are the expected particle types
-            if proton.get("pdg") != PDG_PROTON or pion.get("pdg") != PDG_PION:
-                skipped += 1
-                continue
 
-            nodes.append([
-                _particle_row(proton),   # proton — node 0
-                _particle_row(pion),     # pion   — node 1
-            ])
-            pairs_out.append([
-                pair.get("inv_mass_GeV")    or 0.0,
-                pair.get("pair_pt_GeV")     or 0.0,
-                pair.get("pair_rapidity")   or 0.0,
-                pair.get("delta_rapidity")  or 0.0,
-            ])
-            labels.append(pair["is_signal"])
+def build_arrays_streaming(data_path, progress_every: int = 200_000):
+    """
+    Same result as build_arrays(), but never holds the full parsed JSON tree
+    in memory: events are streamed one at a time from the gzip file via
+    ijson, extracted into the flat accumulator lists, then discarded.
 
-    if skipped:
-        print(f"  [build_arrays] skipped {skipped} pairs (index OOB or wrong PDG)")
+    Peak memory is bounded by the flat numeric output (node_feats/pair_feats/
+    labels), not by the size of the source JSON file.
+    """
+    import ijson
 
-    node_feats = np.array(nodes,     dtype=np.float32)  # (N, 2, 10)
-    pair_feats = np.array(pairs_out, dtype=np.float32)  # (N, 4)
-    labels     = np.array(labels,    dtype=np.float32)  # (N,)
-    return node_feats, pair_feats, labels
+    nodes, pairs_out, labels = [], [], []
+    skipped   = 0
+    n_events  = 0
+
+    with gzip.open(data_path, "rt", encoding="utf-8") as f:
+        for event in ijson.items(f, "events.item"):
+            skipped  += _process_event(event, nodes, pairs_out, labels)
+            n_events += 1
+            if progress_every and n_events % progress_every == 0:
+                print(f"  ... {n_events:,} events streamed, {len(labels):,} pairs so far")
+
+    print(f"  Streamed {n_events:,} events total")
+    return _finalize_arrays(nodes, pairs_out, labels, skipped)
 
 
 # ─── Normalisation ────────────────────────────────────────────────────────────
@@ -359,19 +405,15 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Run {run_id}  |  Device : {device}")
 
-    print(f"Loading {data_path} ...")
-    with gzip.open(data_path, "rt") as f:
-        data = json.load(f)
-
-    print("Building pair arrays ...")
-    node_feats, pair_feats, labels = build_arrays(data)
+    print(f"Streaming {data_path} ...")
+    node_feats, pair_feats, labels = build_arrays_streaming(data_path)
     n_sig = int(labels.sum())
     n_bg  = int((1 - labels).sum())
     print(f"  Pairs : {len(labels):,}  |  signal {n_sig:,}  |  background {n_bg:,}")
     print(f"  Imbalance ratio : {n_bg / n_sig:.1f}× more background than signal")
 
-    models_dir = args.models_dir
-    os.makedirs(os.path.dirname(models_dir), exist_ok=True)
+    models_dir = Path(args.models_dir)
+    models_dir.mkdir(parents=True, exist_ok=True)
 
     train_loader, val_loader, test_loader, norm = make_loaders(
         node_feats, pair_feats, labels, random_state=run_id
