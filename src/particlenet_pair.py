@@ -61,21 +61,15 @@ PDG_PROTON = 2212
 PDG_PION   = 211
 
 
-def _process_event(event: dict, nodes: list, pairs_out: list, labels: list) -> int:
-    """Extract this event's pairs into the flat accumulator lists in-place.
-
-    Returns the number of pairs skipped (index OOB or wrong PDG). Kept
-    separate from build_arrays()/build_arrays_streaming() so both the
-    in-memory and streaming code paths run the exact same extraction logic.
-    """
+def _iter_valid_pairs(event: dict):
+    """Yield (proton, pion, pair) for each pair in event that passes the
+    index-bounds and PDG-type checks. Shared by every extraction path so
+    they all agree on exactly which pairs are kept."""
     particles = event["particles"]
-    skipped = 0
-
     for pair in event.get("pairs", []):
         p_idx  = pair["proton_idx"]
         pi_idx = pair["pion_idx"]
         if p_idx >= len(particles) or pi_idx >= len(particles):
-            skipped += 1
             continue
 
         proton = particles[p_idx]
@@ -83,22 +77,9 @@ def _process_event(event: dict, nodes: list, pairs_out: list, labels: list) -> i
 
         # Guard: confirm these are the expected particle types
         if proton.get("pdg") != PDG_PROTON or pion.get("pdg") != PDG_PION:
-            skipped += 1
             continue
 
-        nodes.append([
-            _particle_row(proton),   # proton — node 0
-            _particle_row(pion),     # pion   — node 1
-        ])
-        pairs_out.append([
-            pair.get("inv_mass_GeV")    or 0.0,
-            pair.get("pair_pt_GeV")     or 0.0,
-            pair.get("pair_rapidity")   or 0.0,
-            pair.get("delta_rapidity")  or 0.0,
-        ])
-        labels.append(pair["is_signal"])
-
-    return skipped
+        yield proton, pion, pair
 
 
 def _finalize_arrays(nodes: list, pairs_out: list, labels: list, skipped: int):
@@ -115,9 +96,9 @@ def build_arrays(data: dict):
     """
     Iterate over all events and pairs; return numpy arrays ready for training.
 
-    Requires the whole `data` dict already resident in memory — use
-    build_arrays_streaming() instead for large files that don't fit in RAM
-    as a parsed JSON tree.
+    Requires the whole `data` dict already resident in memory, and
+    accumulates via Python lists — fine for small files used in inference/
+    exploration. For the large training file use build_arrays_streaming().
 
     Returns
     -------
@@ -129,35 +110,91 @@ def build_arrays(data: dict):
     skipped = 0
 
     for event in data["events"]:
-        skipped += _process_event(event, nodes, pairs_out, labels)
+        n_before = len(labels)
+        n_pairs_total = len(event.get("pairs", []))
+        for proton, pion, pair in _iter_valid_pairs(event):
+            nodes.append([_particle_row(proton), _particle_row(pion)])
+            pairs_out.append([
+                pair.get("inv_mass_GeV")    or 0.0,
+                pair.get("pair_pt_GeV")     or 0.0,
+                pair.get("pair_rapidity")   or 0.0,
+                pair.get("delta_rapidity")  or 0.0,
+            ])
+            labels.append(pair["is_signal"])
+        skipped += n_pairs_total - (len(labels) - n_before)
 
     return _finalize_arrays(nodes, pairs_out, labels, skipped)
+
+
+class _GrowableArray:
+    """Append-only numpy buffer with amortized O(1) append (doubling
+    capacity), analogous to how a Python list grows — but storing packed
+    float32 rows instead of boxed Python objects.
+
+    A plain list.append() of a (2, 10) row of Python floats costs roughly
+    10x the memory of the packed float32 equivalent (per-object overhead
+    for each float + each list). At hundreds of millions of rows that
+    difference is the gap between fitting in RAM and OOMing, so
+    build_arrays_streaming() uses this instead of a list.
+    """
+
+    def __init__(self, item_shape: tuple, dtype=np.float32, initial_capacity: int = 1 << 20):
+        self._buf = np.empty((initial_capacity,) + item_shape, dtype=dtype)
+        self._len = 0
+
+    def append(self, row):
+        if self._len == len(self._buf):
+            new_buf = np.empty((len(self._buf) * 2,) + self._buf.shape[1:], dtype=self._buf.dtype)
+            new_buf[:self._len] = self._buf[:self._len]
+            self._buf = new_buf
+        self._buf[self._len] = row
+        self._len += 1
+
+    def finalize(self) -> np.ndarray:
+        return self._buf[:self._len]
 
 
 def build_arrays_streaming(data_path, progress_every: int = 200_000):
     """
-    Same result as build_arrays(), but never holds the full parsed JSON tree
-    in memory: events are streamed one at a time from the gzip file via
-    ijson, extracted into the flat accumulator lists, then discarded.
+    Same result as build_arrays(), but bounded to roughly the size of the
+    final numeric output (~100 bytes/pair) instead of ~1KB/pair:
 
-    Peak memory is bounded by the flat numeric output (node_feats/pair_feats/
-    labels), not by the size of the source JSON file.
+      1. Events are streamed one at a time from the gzip file via ijson, so
+         the full parsed JSON tree is never held in memory at once.
+      2. Extracted pairs are written into packed numpy buffers (_GrowableArray)
+         instead of Python lists, avoiding per-float/per-list object overhead.
     """
     import ijson
 
-    nodes, pairs_out, labels = [], [], []
-    skipped   = 0
-    n_events  = 0
+    nodes      = _GrowableArray((2, N_PARTICLE_FEATS))
+    pairs_out  = _GrowableArray((N_PAIR_FEATS,))
+    labels     = _GrowableArray(())
+    skipped    = 0
+    n_events   = 0
 
     with gzip.open(data_path, "rt", encoding="utf-8") as f:
         for event in ijson.items(f, "events.item"):
-            skipped  += _process_event(event, nodes, pairs_out, labels)
+            n_pairs_total = len(event.get("pairs", []))
+            n_before      = labels._len
+            for proton, pion, pair in _iter_valid_pairs(event):
+                nodes.append((_particle_row(proton), _particle_row(pion)))
+                pairs_out.append((
+                    pair.get("inv_mass_GeV")    or 0.0,
+                    pair.get("pair_pt_GeV")     or 0.0,
+                    pair.get("pair_rapidity")   or 0.0,
+                    pair.get("delta_rapidity")  or 0.0,
+                ))
+                labels.append(pair["is_signal"])
+            skipped  += n_pairs_total - (labels._len - n_before)
             n_events += 1
             if progress_every and n_events % progress_every == 0:
-                print(f"  ... {n_events:,} events streamed, {len(labels):,} pairs so far")
+                print(f"  ... {n_events:,} events streamed, {labels._len:,} pairs so far")
 
-    print(f"  Streamed {n_events:,} events total")
-    return _finalize_arrays(nodes, pairs_out, labels, skipped)
+    if skipped:
+        print(f"  [build_arrays_streaming] skipped {skipped} pairs (index OOB or wrong PDG)")
+    print(f"  Streamed {n_events:,} events total, {labels._len:,} pairs kept")
+
+    return nodes.finalize(), pairs_out.finalize(), labels.finalize()
 
 
 # ─── Normalisation ────────────────────────────────────────────────────────────
