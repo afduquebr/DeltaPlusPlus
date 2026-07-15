@@ -23,7 +23,7 @@ cd /pbs/home/a/aduque/private/Delta++ || exit
 
 # DATA="/pbs/home/a/aduque/private/Delta++/data/AuAu_1230MeV_1000evts_1.json.gz"
 DATA="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
-MODELS_DIR="/pbs/home/a/aduque/private/Delta++/models_1M"
+MODELS_DIR="/sps/atlas.new/a/aduque/Delta++/models_1M"
 
 echo "Starting run ${SLURM_ARRAY_TASK_ID} ..."
 if ! python -u src/particlenet_pair.py \
