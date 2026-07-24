@@ -11,6 +11,7 @@ Pair-level features (inv_mass, pair_pt, ...) are concatenated at the head.
 
 import argparse
 import gzip
+import random
 import sys
 from pathlib import Path
 
@@ -37,6 +38,14 @@ PAIR_FEATS = [
 
 N_PARTICLE_FEATS = len(PARTICLE_FEATS)   # 10
 N_PAIR_FEATS     = len(PAIR_FEATS)       # 4
+
+# Subsampling defaults for build_arrays_streaming(). Fixed here (rather than
+# tied to --run) so every run in the array job trains on the *same*
+# subsample and only differs by split/init seed — inference.py must call
+# build_arrays_streaming() with these same values (it does, by using the
+# same defaults) to keep saved test_idx_run*.npy indices valid.
+DEFAULT_MAX_PAIRS      = 8_000_000
+DEFAULT_SUBSAMPLE_SEED = 0
 
 
 # ─── Data extraction ──────────────────────────────────────────────────────────
@@ -154,47 +163,123 @@ class _GrowableArray:
         return self._buf[:self._len]
 
 
-def build_arrays_streaming(data_path, progress_every: int = 200_000):
+class _ReservoirSampler:
+    """Fixed-capacity uniform random sample of a stream (Algorithm R) —
+    single pass, no need to know the stream length ahead of time.
+
+    A uniform sample of a stream preserves the stream's class proportions
+    in expectation, so this is how build_arrays_streaming() subsamples down
+    to a manageable pair count while keeping the original signal/background
+    ratio, without ever materializing the pairs it's going to discard.
+    """
+
+    def __init__(self, capacity: int, n_particle_feats: int, n_pair_feats: int, seed: int):
+        self.capacity  = capacity
+        self.node_buf  = np.empty((capacity, 2, n_particle_feats), dtype=np.float32)
+        self.pair_buf  = np.empty((capacity, n_pair_feats), dtype=np.float32)
+        self.label_buf = np.empty(capacity, dtype=np.float32)
+        self.n_seen    = 0
+        self._rng      = random.Random(seed)
+
+    def offer(self, node_row, pair_row, label) -> None:
+        if self.n_seen < self.capacity:
+            slot = self.n_seen
+        else:
+            j = self._rng.randint(0, self.n_seen)   # inclusive of n_seen
+            slot = j if j < self.capacity else None
+        if slot is not None:
+            self.node_buf[slot]  = node_row
+            self.pair_buf[slot]  = pair_row
+            self.label_buf[slot] = label
+        self.n_seen += 1
+
+    def finalize(self):
+        n = min(self.n_seen, self.capacity)
+        return self.node_buf[:n], self.pair_buf[:n], self.label_buf[:n]
+
+
+def build_arrays_streaming(
+    data_path,
+    progress_every: int = 200_000,
+    max_pairs: int | None = DEFAULT_MAX_PAIRS,
+    subsample_seed: int = DEFAULT_SUBSAMPLE_SEED,
+):
     """
     Same result as build_arrays(), but bounded to roughly the size of the
     final numeric output (~100 bytes/pair) instead of ~1KB/pair:
 
       1. Events are streamed one at a time from the gzip file via ijson, so
          the full parsed JSON tree is never held in memory at once.
-      2. Extracted pairs are written into packed numpy buffers (_GrowableArray)
-         instead of Python lists, avoiding per-float/per-list object overhead.
+      2. If max_pairs is None, extracted pairs are written into packed numpy
+         buffers (_GrowableArray), avoiding per-float/per-list object
+         overhead. If max_pairs is set, pairs are instead reservoir-sampled
+         (_ReservoirSampler) down to at most max_pairs — for a hundreds-of-
+         millions-of-pairs file, training on everything is both far more
+         data than this problem needs and far slower per epoch than
+         necessary, so the default caps it at DEFAULT_MAX_PAIRS.
+
+    subsample_seed is intentionally independent of --run: every run in the
+    training array job should see the *same* subsample (only the train/val/
+    test split and model init should vary with --run), and inference.py
+    must reconstruct this exact subsample to keep saved test_idx valid — so
+    don't change (max_pairs, subsample_seed) without regenerating splits.
     """
     import ijson
 
-    nodes      = _GrowableArray((2, N_PARTICLE_FEATS))
-    pairs_out  = _GrowableArray((N_PAIR_FEATS,))
-    labels     = _GrowableArray(())
-    skipped    = 0
-    n_events   = 0
+    if max_pairs is None:
+        nodes     = _GrowableArray((2, N_PARTICLE_FEATS))
+        pairs_out = _GrowableArray((N_PAIR_FEATS,))
+        labels    = _GrowableArray(())
+        reservoir = None
+    else:
+        reservoir = _ReservoirSampler(max_pairs, N_PARTICLE_FEATS, N_PAIR_FEATS, seed=subsample_seed)
+
+    skipped  = 0
+    n_events = 0
+    n_kept   = 0   # valid pairs seen so far, before any subsampling
 
     with gzip.open(data_path, "rt", encoding="utf-8") as f:
         for event in ijson.items(f, "events.item"):
             n_pairs_total = len(event.get("pairs", []))
-            n_before      = labels._len
+            n_valid_this_event = 0
             for proton, pion, pair in _iter_valid_pairs(event):
-                nodes.append((_particle_row(proton), _particle_row(pion)))
-                pairs_out.append((
+                node_row = (_particle_row(proton), _particle_row(pion))
+                pair_row = (
                     pair.get("inv_mass_GeV")    or 0.0,
                     pair.get("pair_pt_GeV")     or 0.0,
                     pair.get("pair_rapidity")   or 0.0,
                     pair.get("delta_rapidity")  or 0.0,
-                ))
-                labels.append(pair["is_signal"])
-            skipped  += n_pairs_total - (labels._len - n_before)
+                )
+                label_val = pair["is_signal"]
+
+                if reservoir is None:
+                    nodes.append(node_row)
+                    pairs_out.append(pair_row)
+                    labels.append(label_val)
+                else:
+                    reservoir.offer(node_row, pair_row, label_val)
+                n_valid_this_event += 1
+
+            skipped  += n_pairs_total - n_valid_this_event
+            n_kept   += n_valid_this_event
             n_events += 1
             if progress_every and n_events % progress_every == 0:
-                print(f"  ... {n_events:,} events streamed, {labels._len:,} pairs so far")
+                kept_str = f"{n_kept:,} valid pairs seen"
+                if reservoir is not None:
+                    kept_str += f", {min(reservoir.n_seen, reservoir.capacity):,} kept in sample"
+                print(f"  ... {n_events:,} events streamed, {kept_str}")
 
     if skipped:
         print(f"  [build_arrays_streaming] skipped {skipped} pairs (index OOB or wrong PDG)")
-    print(f"  Streamed {n_events:,} events total, {labels._len:,} pairs kept")
 
-    return nodes.finalize(), pairs_out.finalize(), labels.finalize()
+    if reservoir is None:
+        print(f"  Streamed {n_events:,} events total, {labels._len:,} pairs kept")
+        return nodes.finalize(), pairs_out.finalize(), labels.finalize()
+
+    n_final = min(reservoir.n_seen, reservoir.capacity)
+    print(f"  Streamed {n_events:,} events total, {n_kept:,} valid pairs seen, "
+          f"{n_final:,} pairs kept via reservoir sample")
+    return reservoir.finalize()
 
 
 # ─── Normalisation ────────────────────────────────────────────────────────────
@@ -266,8 +351,9 @@ def make_loaders(
     node_feats: np.ndarray,
     pair_feats: np.ndarray,
     labels: np.ndarray,
-    batch_size: int = 256,
+    batch_size: int = 8192,
     random_state: int = 42,
+    num_workers: int = 4,
 ):
     """Split → normalise → wrap in DataLoaders.
 
@@ -283,7 +369,11 @@ def make_loaders(
             norm.transform_pairs(pair_feats[idx]),
             labels[idx],
         )
-        return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
+        return DataLoader(
+            ds, batch_size=batch_size, shuffle=shuffle,
+            num_workers=num_workers, pin_memory=True,
+            persistent_workers=num_workers > 0,
+        )
 
     return _loader(idx_tr, True), _loader(idx_va, False), _loader(idx_te, False), norm
 
@@ -400,7 +490,9 @@ def run_epoch(model, loader, optimizer, criterion, device, train=True):
 
     with ctx:
         for nf, pf, y in loader:
-            nf, pf, y = nf.to(device), pf.to(device), y.to(device)
+            nf = nf.to(device, non_blocking=True)
+            pf = pf.to(device, non_blocking=True)
+            y  = y.to(device, non_blocking=True)
             logits = model(nf, pf)
             loss   = criterion(logits, y)
 
@@ -431,10 +523,20 @@ if __name__ == "__main__":
                         help="Run index (1-5); sets random seed and output filename")
     parser.add_argument("--models_dir", type=str, default="models",
                         help="Directory to save trained models and normalisers")
+    parser.add_argument("--max_pairs", type=int, default=DEFAULT_MAX_PAIRS,
+                        help="Cap pairs via reservoir sampling; 0 disables the cap "
+                             "(keep everything, only sane for small files)")
+    parser.add_argument("--subsample_seed", type=int, default=DEFAULT_SUBSAMPLE_SEED,
+                        help="Seed for reservoir sampling — keep fixed across the "
+                             "run array so every run trains on the same subsample")
+    parser.add_argument("--batch_size", type=int, default=8192)
+    parser.add_argument("--num_workers", type=int, default=4,
+                        help="DataLoader worker processes (match --cpus-per-task - 1)")
     args = parser.parse_args()
 
     data_path = args.data_dir
     run_id    = args.run
+    max_pairs = None if args.max_pairs == 0 else args.max_pairs
 
     torch.manual_seed(run_id)
     np.random.seed(run_id)
@@ -443,7 +545,9 @@ if __name__ == "__main__":
     print(f"Run {run_id}  |  Device : {device}")
 
     print(f"Streaming {data_path} ...")
-    node_feats, pair_feats, labels = build_arrays_streaming(data_path)
+    node_feats, pair_feats, labels = build_arrays_streaming(
+        data_path, max_pairs=max_pairs, subsample_seed=args.subsample_seed
+    )
     n_sig = int(labels.sum())
     n_bg  = int((1 - labels).sum())
     print(f"  Pairs : {len(labels):,}  |  signal {n_sig:,}  |  background {n_bg:,}")
@@ -453,7 +557,8 @@ if __name__ == "__main__":
     models_dir.mkdir(parents=True, exist_ok=True)
 
     train_loader, val_loader, test_loader, norm = make_loaders(
-        node_feats, pair_feats, labels, random_state=run_id
+        node_feats, pair_feats, labels, random_state=run_id,
+        batch_size=args.batch_size, num_workers=args.num_workers,
     )
     _, _, idx_te = split_indices(labels, random_state=run_id)
 

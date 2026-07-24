@@ -11,8 +11,6 @@ Loads best_model_run{1..5}.pt, evaluates each on its own held-out test split
   - Invariant mass spectrum (averaged model selection)
 """
 
-import gzip
-import json
 import sys
 import os
 from pathlib import Path
@@ -33,7 +31,7 @@ from sklearn.metrics import (
 
 sys.path.insert(0, str(Path(__file__).parent))
 from particlenet_pair import (
-    build_arrays,
+    build_arrays_streaming,
     Normaliser, PairDataset,
     ParticleNetPair,
     N_PARTICLE_FEATS, N_PAIR_FEATS,
@@ -42,20 +40,22 @@ from torch.utils.data import DataLoader
 
 PATH = "/pbs/home/a/aduque/private/Delta++"
 MODEL_NAME = "ParticleNetPair"
-DATA_PATH  = f"{PATH}/data/AuAu_1230MeV_1000evts_1.json.gz"
-MODELS_DIR = f"{PATH}/models"
+DATA_PATH  = "/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
+MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_1M"
 N_RUNS     = 5
 SCORE_CUT  = 0.5
 
 
 # ─── Load data ────────────────────────────────────────────────────────────────
+#
+# build_arrays_streaming() is called with its default (max_pairs,
+# subsample_seed) — the same defaults train.sh used — so this reconstructs
+# the *exact* subsample training ran on, keeping the saved test_idx_run*.npy
+# indices valid. Don't pass overrides here unless train.sh's invocation
+# changes to match.
 
-print(f"Loading {DATA_PATH} ...")
-with gzip.open(DATA_PATH, "rt") as f:
-    data = json.load(f)
-
-print("Building pair arrays ...")
-node_feats, pair_feats, labels = build_arrays(data)
+print(f"Streaming {DATA_PATH} ...")
+node_feats, pair_feats, labels = build_arrays_streaming(DATA_PATH)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device : {device}\n")
@@ -80,7 +80,7 @@ for run_id in range(1, N_RUNS + 1):
         norm.transform_pairs(pair_feats[idx_te]),
         labels[idx_te],
     )
-    test_loader = DataLoader(test_ds, batch_size=256, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=8192, shuffle=False)
 
     model = ParticleNetPair(N_PARTICLE_FEATS, N_PAIR_FEATS).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
