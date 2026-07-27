@@ -35,6 +35,7 @@ import ijson
 
 PDG_PROTON   = 2212
 PDG_PION     = 211
+PDG_PHOTON   = 22
 PDG_DELTA_PP = 2224
 
 
@@ -57,6 +58,17 @@ def main():
     n_signal = 0
     signal_mate_value_counts = Counter()  # mate_index value -> # signal pairs matched via it
     parent_pdg_counts = Counter()         # pdg of a shared parent, when proton/pion parent_index match
+
+    # Does a photon in the same event share a parent_index with a pion?
+    # (Tests: does a real Delta++ -> p + pi+ decay also radiate a photon
+    # that 'mate' bookkeeping might latch a pion onto instead of its true
+    # sibling proton?)
+    photon_pion_parent_counts = Counter()
+    n_photon_pion_shared = 0
+
+    # For pairs where mate says signal but parent species doesn't confirm
+    # Delta++: what are the (proton.parent_index, pion.parent_index) values?
+    fp_parent_pair_counts = Counter()
 
     # Confusion matrix: current mate-based is_signal vs. "shares a real
     # Delta++ parent" ground truth.
@@ -93,6 +105,16 @@ def main():
                     n_pions += 1
                     mate_counts_pion[mv] += 1
 
+            photons = [p for p in particles if p["pdg"] == PDG_PHOTON]
+            pions_in_event = [p for p in particles if p["pdg"] == PDG_PION]
+            if photons and pions_in_event:
+                for ph in photons:
+                    ph_par = ph["parent_index"]
+                    for pi in pions_in_event:
+                        if ph_par == pi["parent_index"]:
+                            photon_pion_parent_counts[ph_par] += 1
+                            n_photon_pion_shared += 1
+
             for pair in event.get("pairs", []):
                 n_pairs += 1
                 p_idx, pi_idx = pair["proton_idx"], pair["pion_idx"]
@@ -115,6 +137,12 @@ def main():
                 if ppar == pipar:
                     parent_pdg_counts[ppar] += 1
                 is_delta = (ppar == pipar == PDG_DELTA_PP)
+
+                # For pairs where mate SAYS signal but parent species does
+                # NOT confirm Delta++ -- what is actually going on with
+                # their parent_index values?
+                if sig and not is_delta:
+                    fp_parent_pair_counts[(ppar, pipar)] += 1
 
                 m = pair.get("inv_mass_GeV")
                 if m is not None:
@@ -181,6 +209,19 @@ def main():
     for val, cnt in parent_pdg_counts.most_common(8):
         flag = "  <-- Delta++" if val == PDG_DELTA_PP else ""
         print(f"    parent_pdg={val:>8}  count={cnt:>10,}{flag}")
+
+    print("\n--- photon+pion shared-parent check ---")
+    print(f"Photon-pion (same event) pairs sharing a parent_index : {n_photon_pion_shared:,}")
+    print("Top parent PDG codes shared between a photon and a pion:")
+    for val, cnt in photon_pion_parent_counts.most_common(8):
+        flag = "  <-- Delta++" if val == PDG_DELTA_PP else ""
+        print(f"    parent_pdg={val:>8}  count={cnt:>10,}{flag}")
+
+    print("\n--- pairs where mate says signal but parent species is NOT Delta++ (false positives) ---")
+    print("Top (proton.parent_index, pion.parent_index) combos among these:")
+    for (ppar, pipar), cnt in fp_parent_pair_counts.most_common(10):
+        same = " (shared, non-Delta++ parent)" if ppar == pipar else " (mismatched parents)"
+        print(f"    proton_parent={ppar!r:>8}  pion_parent={pipar!r:>8}  count={cnt:>10,}{same}")
 
     print(f"\nConfusion matrix: mate-based is_signal  vs.  shares-a-confirmed-Delta++-parent")
     print(f"  is_signal=1 AND real Delta++ parent  (true positive)                : {tp:,}")
