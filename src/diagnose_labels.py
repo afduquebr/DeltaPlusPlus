@@ -70,6 +70,14 @@ def main():
     # Delta++: what are the (proton.parent_index, pion.parent_index) values?
     fp_parent_pair_counts = Counter()
 
+    # Of pairs that truly share a Delta++ parent: how many ALSO have a
+    # genuine (non-sentinel, mutually matching) mate_index? This tells us
+    # whether requiring both mate-match AND parent-match (as the proposed
+    # convert_RootDict.py fix does) would still leave usable signal, or
+    # whether mate tracking is so broken that almost nothing survives.
+    n_delta_total = 0
+    n_delta_with_clean_mate_match = 0
+
     # Confusion matrix: current mate-based is_signal vs. "shares a real
     # Delta++ parent" ground truth.
     tp = fp = fn = tn = 0
@@ -143,6 +151,12 @@ def main():
                 # their parent_index values?
                 if sig and not is_delta:
                     fp_parent_pair_counts[(ppar, pipar)] += 1
+
+                if is_delta:
+                    n_delta_total += 1
+                    pmate, pimate = proton["mate_index"], pion["mate_index"]
+                    if pmate == pimate and pmate != -1:
+                        n_delta_with_clean_mate_match += 1
 
                 m = pair.get("inv_mass_GeV")
                 if m is not None:
@@ -222,6 +236,21 @@ def main():
     for (ppar, pipar), cnt in fp_parent_pair_counts.most_common(10):
         same = " (shared, non-Delta++ parent)" if ppar == pipar else " (mismatched parents)"
         print(f"    proton_parent={ppar!r:>8}  pion_parent={pipar!r:>8}  count={cnt:>10,}{same}")
+
+    print("\n--- would the proposed fix (mate-match excl. -1, AND parent==2224) leave usable signal? ---")
+    frac = n_delta_with_clean_mate_match / max(n_delta_total, 1)
+    print(f"  Pairs confirmed to share a real Delta++ parent : {n_delta_total:,}")
+    print(f"  ... of which also have a genuine (non-sentinel) matching mate_index : "
+          f"{n_delta_with_clean_mate_match:,}  ({100*frac:.2f}%)")
+    if frac < 0.05:
+        print("  >>> mate tracking is essentially absent even for confirmed real Delta++ pairs -- "
+              "requiring BOTH would destroy almost all signal. Use parent_index ALONE instead. <<<")
+    elif frac < 0.5:
+        print("  >>> mate tracking recovers a minority of confirmed real Delta++ pairs -- "
+              "requiring BOTH is likely too strict; consider parent_index alone. <<<")
+    else:
+        print("  >>> mate tracking recovers most confirmed real Delta++ pairs -- "
+              "requiring BOTH should leave a reasonably sized, very clean signal set. <<<")
 
     print(f"\nConfusion matrix: mate-based is_signal  vs.  shares-a-confirmed-Delta++-parent")
     print(f"  is_signal=1 AND real Delta++ parent  (true positive)                : {tp:,}")
