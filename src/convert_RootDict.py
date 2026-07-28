@@ -25,7 +25,6 @@ CHUNK_SIZE = 2000  # events per chunk; lower this if you still hit OOM
 
 PROTON_PDG = 2212
 PION_PDG = 211
-DELTA_PP_PDG = 2224
 
 PARTICLE_BRANCHES = [
     "fParticles.fIndex",
@@ -171,20 +170,22 @@ def event_to_dict(ev, event_number):
         # equality check reproduces neither figure, and on the full 1e6-
         # event production file is ~97% spurious sentinel collisions.
         #
-        # Still AND'd with parent_index == 2224 (Delta++ species) as a
-        # cheap, effectively-free confirmatory check: a mutual mate pointer
-        # can also correctly link true siblings from OTHER baryon
-        # resonances (e.g. N*/Delta* states that also decay to p + pi+),
-        # so this restricts the label to Delta++ specifically.
-        mutual_mate_match = (
+        # Not restricted to parent_index == 2224 (Delta++) specifically:
+        # any mutually-pointing pair is a genuine correlated decay, whether
+        # from Delta++ or another (much rarer) baryon resonance that also
+        # decays to p + pi+ -- both are real signal, not combinatorial
+        # background. On the small reference file only 28 of 2,858 mutual
+        # matches (<1%) are non-Delta++, so this barely changes the small
+        # file but avoids discarding genuinely correlated pairs.
+        #
+        # mate_index sentinels never collide with a real array position, so
+        # no separate exclusion is needed: -1 ("no tracked partner") and
+        # -1000 (3-body decay, no single well-defined partner) can never
+        # equal an actual proton/pion index.
+        is_signal = (
             (mate[proton_idx][:, None] == pion_idx[None, :])
             & (mate[pion_idx][None, :] == proton_idx[:, None])
-        )
-        parent_match = (
-            (parent[proton_idx][:, None] == DELTA_PP_PDG)
-            & (parent[pion_idx][None, :] == DELTA_PP_PDG)
-        )
-        is_signal = (mutual_mate_match & parent_match).astype(int)
+        ).astype(int)
 
         proton_grid, pion_grid = np.meshgrid(proton_idx, pion_idx, indexing="ij")
 
@@ -202,7 +203,7 @@ def event_to_dict(ev, event_number):
                 "pair_pt_GeV": pair_pt_f[j],
                 "pair_rapidity": pair_rapidity_f[j],
                 "delta_rapidity": delta_rapidity_f[j],
-                "label_source": "mutual_mate_pointer_and_delta_pp_parent",
+                "label_source": "mutual_mate_pointer",
             }
             for j, (pi, ki, sig) in enumerate(
                 zip(proton_grid.ravel(), pion_grid.ravel(), is_signal.ravel())
