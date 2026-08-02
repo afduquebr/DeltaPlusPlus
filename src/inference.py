@@ -38,10 +38,12 @@ from particlenet_pair import (
 )
 from torch.utils.data import DataLoader
 
-PATH = "/pbs/home/a/aduque/private/Delta++"
+PATH = "/pbs/home/a/aduque/private/Delta++/figs/800M"
 MODEL_NAME = "ParticleNetPair"
+# DATA_PATH  = "data/AuAu_1230MeV_1000evts_1.json.gz"
+# MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_700k"
 DATA_PATH  = "/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
-MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_1M"
+MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_800M"
 N_RUNS     = 5
 SCORE_CUT  = 0.5
 
@@ -171,7 +173,7 @@ cms = np.array([confusion_matrix(r["y_test"], r["y_pred"], normalize="true")
 cm_mean = cms.mean(0)
 cm_std  = cms.std(0)
 
-figs_dir = f"{PATH}/figs"
+figs_dir = f"{PATH}"
 os.makedirs(os.path.dirname(figs_dir), exist_ok=True)
 
 mean_auc = np.mean(auc_vals)
