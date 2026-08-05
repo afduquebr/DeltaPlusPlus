@@ -11,8 +11,8 @@ Loads best_model_run{1..5}.pt, evaluates each on its own held-out test split
   - Invariant mass spectrum (averaged model selection)
 """
 
+import argparse
 import sys
-import os
 from pathlib import Path
 
 
@@ -35,29 +35,52 @@ from particlenet_pair import (
     Normaliser, PairDataset,
     ParticleNetPair,
     N_PARTICLE_FEATS, N_PAIR_FEATS,
+    DEFAULT_MAX_PAIRS, DEFAULT_SUBSAMPLE_SEED,
 )
 from torch.utils.data import DataLoader
 
-PATH = "/pbs/home/a/aduque/private/Delta++/figs/800M"
 MODEL_NAME = "ParticleNetPair"
-# DATA_PATH  = "data/AuAu_1230MeV_1000evts_1.json.gz"
-# MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_700k"
-DATA_PATH  = "/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
-MODELS_DIR = "/sps/atlas.new/a/aduque/Delta++/models_800M"
-N_RUNS     = 5
-SCORE_CUT  = 0.5
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--data_dir", type=str,
+                     default="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz",
+                     help="Path to input .json.gz file")
+parser.add_argument("--models_dir", type=str,
+                     default="/sps/atlas.new/a/aduque/Delta++/models_800M",
+                     help="Directory holding best_model_run*.pt / test_idx_run*.npy / normalizer_run*.npz")
+parser.add_argument("--figs_dir", type=str,
+                     default="/pbs/home/a/aduque/private/Delta++/figs/800M",
+                     help="Directory to save evaluation plots")
+parser.add_argument("--max_pairs", type=int, default=DEFAULT_MAX_PAIRS,
+                     help="MUST match the --max_pairs used to train the run in --models_dir "
+                          "(0 = unbounded, i.e. the full-dataset run), or saved test_idx "
+                          "indices will be out of bounds for the reconstructed array")
+parser.add_argument("--subsample_seed", type=int, default=DEFAULT_SUBSAMPLE_SEED,
+                     help="Must match the --subsample_seed used to train the run in --models_dir")
+parser.add_argument("--n_runs", type=int, default=5)
+parser.add_argument("--score_cut", type=float, default=0.5)
+args = parser.parse_args()
+
+DATA_PATH  = args.data_dir
+MODELS_DIR = args.models_dir
+N_RUNS     = args.n_runs
+SCORE_CUT  = args.score_cut
+max_pairs  = None if args.max_pairs == 0 else args.max_pairs
 
 
 # ─── Load data ────────────────────────────────────────────────────────────────
 #
-# build_arrays_streaming() is called with its default (max_pairs,
-# subsample_seed) — the same defaults train.sh used — so this reconstructs
-# the *exact* subsample training ran on, keeping the saved test_idx_run*.npy
-# indices valid. Don't pass overrides here unless train.sh's invocation
-# changes to match.
+# max_pairs/subsample_seed must match whatever the run in --models_dir was
+# actually trained with, so this reconstructs the *exact* subsample training
+# ran on and the saved test_idx_run*.npy indices stay valid. A --max_pairs
+# that's 0 (unbounded) or any value >= the file's true pair count reproduces
+# the identical full array regardless of the exact number used at train time,
+# since the reservoir sampler only ever removes items once it fills up.
 
 print(f"Streaming {DATA_PATH} ...")
-node_feats, pair_feats, labels = build_arrays_streaming(DATA_PATH)
+node_feats, pair_feats, labels = build_arrays_streaming(
+    DATA_PATH, max_pairs=max_pairs, subsample_seed=args.subsample_seed
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device : {device}\n")
@@ -173,8 +196,8 @@ cms = np.array([confusion_matrix(r["y_test"], r["y_pred"], normalize="true")
 cm_mean = cms.mean(0)
 cm_std  = cms.std(0)
 
-figs_dir = f"{PATH}"
-os.makedirs(os.path.dirname(figs_dir), exist_ok=True)
+figs_dir = args.figs_dir
+Path(figs_dir).mkdir(parents=True, exist_ok=True)
 
 mean_auc = np.mean(auc_vals)
 std_auc  = np.std(auc_vals)
