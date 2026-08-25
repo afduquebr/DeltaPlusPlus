@@ -51,10 +51,13 @@ parser.add_argument("--models_dir", type=str,
 parser.add_argument("--figs_dir", type=str,
                      default="/pbs/home/a/aduque/private/Delta++/figs/800M",
                      help="Directory to save evaluation plots")
-parser.add_argument("--max_pairs", type=int, default=DEFAULT_MAX_PAIRS,
+parser.add_argument("--max_pairs", type=int, default=0,
                      help="MUST match the --max_pairs used to train the run in --models_dir "
                           "(0 = unbounded, i.e. the full-dataset run), or saved test_idx "
-                          "indices will be out of bounds for the reconstructed array")
+                          "indices will be out of bounds for the reconstructed array. "
+                          "Defaults to 0 to match the default --models_dir above (the "
+                          "full-dataset run) -- override to DEFAULT_MAX_PAIRS "
+                          f"({DEFAULT_MAX_PAIRS}) when evaluating the 8M-pair run instead.")
 parser.add_argument("--subsample_seed", type=int, default=DEFAULT_SUBSAMPLE_SEED,
                      help="Must match the --subsample_seed used to train the run in --models_dir")
 parser.add_argument("--n_runs", type=int, default=5)
