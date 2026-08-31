@@ -174,6 +174,21 @@ def sos_sim_label(ax):
     ax.text(0.03, 0.86, r"$E_\mathrm{kin}/A = 1.23$ GeV, ParticleNet",  transform=ax.transAxes, fontsize=13)
 
 
+def fmt_std(std, min_decimals=3):
+    """Format a std with enough decimals to stay nonzero when very small.
+
+    With N_RUNS=5 on hundreds of millions of pairs, run-to-run std can be
+    small enough (e.g. 1e-4) that a fixed ".3f"/".4f" rounds it to "0.000",
+    which reads as a broken/suspicious result rather than a genuinely very
+    precise one (the runs really do agree that closely on huge datasets).
+    """
+    if not np.isfinite(std) or std <= 0:
+        return f"{0:.{min_decimals}f}"
+    decimals = max(min_decimals, int(np.ceil(-np.log10(std))) + 2)
+    decimals = min(decimals, 10)
+    return f"{std:.{decimals}f}"
+
+
 auc_vals = [r["auc"] for r in results]
 run_ids  = [r["run"] for r in results]
 
@@ -215,7 +230,7 @@ def save(fig, name):
 # 1 — Average ROC curve with ±1σ band
 fig, ax = plt.subplots(figsize=(6, 5))
 ax.plot(fpr_grid, tpr_mean, color="steelblue", lw=2,
-        label=f"Mean ROC  AUC = {mean_auc:.3f} ± {std_auc:.3f}")
+        label=f"Mean ROC  AUC = {mean_auc:.3f} ± {fmt_std(std_auc)}")
 ax.fill_between(fpr_grid, tpr_mean - tpr_std, tpr_mean + tpr_std,
                 alpha=0.25, color="steelblue", label=r"±1$\sigma$")
 ax.plot([0, 1], [0, 1], "k--", lw=1)
@@ -233,7 +248,7 @@ fig, ax = plt.subplots(figsize=(6, 5))
 ax.bar(run_ids, auc_vals, color="steelblue", alpha=0.75)
 ax.axhline(mean_auc, color="k", lw=1.5, ls="--", label=f"Mean = {mean_auc:.4f}")
 ax.axhspan(mean_auc - std_auc, mean_auc + std_auc,
-           alpha=0.15, color="k", label=f"±1σ = {std_auc:.4f}")
+           alpha=0.15, color="k", label=f"±1σ = {fmt_std(std_auc)}")
 ax.set_xlabel("Run")
 ax.set_ylabel("AUC-ROC")
 ax.set_title("AUC per run")
@@ -366,8 +381,15 @@ print(f"  S/√B at optimal cut          : {snr_scan_mean.max():.3f} ± {snr_sca
 
 # ── Mass spectrum histograms (averaged over runs) ───────────────────────────
 
-# Accumulate per-run histograms then average to get mean ± std
-def mass_hist(masses): return np.histogram(masses, bins=MASS_BINS)[0].astype(float)
+# Accumulate per-run histograms then average to get mean ± std. Normalized
+# to each histogram's own total (fraction of pairs / bin) rather than raw
+# counts, so the y-axis scale is comparable across runs regardless of the
+# underlying dataset size (700K vs 8M vs 730M pairs) -- same convention
+# already used for score_distribution.png (density=True) above.
+def mass_hist(masses):
+    counts = np.histogram(masses, bins=MASS_BINS)[0].astype(float)
+    total = counts.sum()
+    return counts / total if total > 0 else counts
 
 hists_all, hists_cut, hists_sig = [], [], []
 for r in results:
@@ -387,24 +409,36 @@ h_sig_mean, h_sig_std = np.mean(hists_sig, 0), np.std(hists_sig, 0)
 
 fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
+# Log-scale y-range from the actual (normalized) data, with headroom —
+# a hardcoded range doesn't hold up as the dataset size (and thus the
+# absolute density scale) changes across runs.
+_eps = 1e-12   # floor so the -std shading never touches zero/negative on a log axis
+_all_vals = np.concatenate([h_all_mean, h_cut_mean, h_sig_mean])
+_positive = _all_vals[_all_vals > 0]
+if _positive.size:
+    y_lo = max(_positive.min() * 0.3, _eps)
+    y_hi = _positive.max() * 3
+else:
+    y_lo, y_hi = _eps, 1.0
+
 ax = axes[0]
 ax.step(MASS_CTRS, h_all_mean, where="mid", color="grey",      lw=1.5, label="All pairs (no cut)")
-ax.fill_between(MASS_CTRS, h_all_mean - h_all_std, h_all_mean + h_all_std,
+ax.fill_between(MASS_CTRS, np.maximum(h_all_mean - h_all_std, _eps), h_all_mean + h_all_std,
                 step="mid", alpha=0.2, color="grey")
 ax.step(MASS_CTRS, h_cut_mean, where="mid", color="steelblue", lw=1.5,
         label=f"Score ≥ {SCORE_CUT}")
-ax.fill_between(MASS_CTRS, h_cut_mean - h_cut_std, h_cut_mean + h_cut_std,
+ax.fill_between(MASS_CTRS, np.maximum(h_cut_mean - h_cut_std, _eps), h_cut_mean + h_cut_std,
                 step="mid", alpha=0.25, color="steelblue")
 ax.step(MASS_CTRS, h_sig_mean, where="mid", color="tomato",    lw=1.5, label="True signal (Δ⁺⁺)")
-ax.fill_between(MASS_CTRS, h_sig_mean - h_sig_std, h_sig_mean + h_sig_std,
+ax.fill_between(MASS_CTRS, np.maximum(h_sig_mean - h_sig_std, _eps), h_sig_mean + h_sig_std,
                 step="mid", alpha=0.25, color="tomato")
 ax.axvline(DELTA_MASS, color="k", ls="--", lw=1, label=f"M(Δ⁺⁺) = {DELTA_MASS} GeV/c²")
 ax.axvspan(MASS_WIN_LO, MASS_WIN_HI, alpha=0.06, color="gold", label="Signal window")
 ax.set_xlabel(r"$M(p\pi^+)$ [GeV/c²]", fontsize=13)
-ax.set_ylabel("Pairs / bin", fontsize=13)
+ax.set_ylabel("Fraction of pairs / bin", fontsize=13)
 ax.set_title("Invariant mass spectrum", fontsize=13)
 ax.set_yscale("log")
-ax.set_ylim(1, 2000)
+ax.set_ylim(y_lo, y_hi)
 # ax.set_title(r"$\bf{SOS}$ Simulation Internal", fontsize=13, loc="left")
 ax.legend(fontsize=9)
 sos_sim_label(ax)
