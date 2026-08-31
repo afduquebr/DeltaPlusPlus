@@ -43,10 +43,10 @@ MODEL_NAME = "ParticleNetPair"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_dir", type=str,
-                     default="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz",
+                     default="/sps/atlas/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz",
                      help="Path to input .json.gz file")
 parser.add_argument("--models_dir", type=str,
-                     default="/sps/atlas.new/a/aduque/Delta++/models_800M",
+                     default="/sps/atlas/a/aduque/Delta++/models_800M",
                      help="Directory holding best_model_run*.pt / test_idx_run*.npy / normalizer_run*.npz")
 parser.add_argument("--figs_dir", type=str,
                      default="/pbs/home/a/aduque/private/Delta++/figs/800M",

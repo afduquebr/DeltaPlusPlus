@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=delta_pnet_inference
 #SBATCH --output=./logs/inference_%j.log
-#SBATCH --mem=64G
-#SBATCH --time=04:00:00
+#SBATCH --mem=300G
+#SBATCH --time=72:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
@@ -12,7 +12,7 @@
 module add conda
 
 unset LD_LIBRARY_PATH
-conda_env="/sps/atlas.new/a/aduque/conda/JetFlow"
+conda_env="/sps/atlas/a/aduque/conda/JetFlow"
 if ! conda activate "$conda_env"; then
     echo "Error: Failed to activate Conda environment."
     exit 1
@@ -20,8 +20,8 @@ fi
 
 cd /pbs/home/a/aduque/private/Delta++ || exit
 
-DATA="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
-MODELS_DIR="/sps/atlas.new/a/aduque/Delta++/models_800M"
+DATA="/sps/atlas/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
+MODELS_DIR="/sps/atlas/a/aduque/Delta++/models_800M"
 FIGS_DIR="/pbs/home/a/aduque/private/Delta++/figs/800M"
 
 # MUST match whatever (--max_pairs, --subsample_seed) the run in MODELS_DIR

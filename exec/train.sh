@@ -3,7 +3,7 @@
 #SBATCH --output=./logs/train_%A_%a.log
 #SBATCH --array=1-5
 #SBATCH --mem=300G
-#SBATCH --time=48:00:00
+#SBATCH --time=168:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=5
 #SBATCH --gres=gpu:1
@@ -13,7 +13,7 @@
 module add conda
 
 unset LD_LIBRARY_PATH
-conda_env="/sps/atlas.new/a/aduque/conda/JetFlow"
+conda_env="/sps/atlas/a/aduque/conda/JetFlow"
 if ! conda activate "$conda_env"; then
     echo "Error: Failed to activate Conda environment."
     exit 1
@@ -22,14 +22,14 @@ fi
 cd /pbs/home/a/aduque/private/Delta++ || exit
 
 # DATA="/pbs/home/a/aduque/private/Delta++/data/AuAu_1230MeV_1000evts_1.json.gz"
-DATA="/sps/atlas.new/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
-MODELS_DIR="/sps/atlas.new/a/aduque/Delta++/models_1M"
+DATA="/sps/atlas/a/aduque/Delta++/urqmd_f15_flagEos0_1e6.json.gz"
+MODELS_DIR="/sps/atlas/a/aduque/Delta++/models_800M"
 
 # Reservoir-subsample the ~730M extracted pairs down to a manageable size —
 # keep MAX_PAIRS/SUBSAMPLE_SEED identical across every run in this array
 # (all 5 runs must train on the same subsample) and identical to whatever
 # inference.py uses, or saved test_idx_run*.npy indices become invalid.
-MAX_PAIRS=8000000
+MAX_PAIRS=800000000
 SUBSAMPLE_SEED=0
 BATCH_SIZE=8192
 NUM_WORKERS=4   # matches --cpus-per-task=5 above, minus 1 for the main process
